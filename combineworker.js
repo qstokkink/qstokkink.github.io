@@ -2,10 +2,11 @@ onmessage = function (event) {
     var bytes = event.data.bytes;
     var amount = event.data.bytes.length;
     var size = event.data.bytes[0].length;
+    var offset = event.data.offset;
     var result = new Array(size);
     for (i = 0; i < size; i++) {
         // Ignore the Alpha byte
-        if ((i % 4) == 3){
+        if (((i+offset) % 4) == 3){
             result[i] = 255;
         } else {
             var out = bytes[0][i];

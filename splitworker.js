@@ -32,18 +32,19 @@ function createSplit(randomness, b, amount) {
 }
 
 onmessage = function (event) {
-    bytes = event.data.bytes;
-    randomness = {
+    var bytes = event.data.bytes;
+    var randomness = {
         "randomness": event.data.randomness,
         "maxlen": event.data.randomness.length,
         "random_index": 0
     };
-    amount = event.data.amount;
-    result = new Array(bytes.length);
-    alpha_array = Array.apply(null, Array(amount)).map(function(){return 255});
+    var amount = event.data.amount;
+    var result = new Array(bytes.length);
+    var offset = event.data.offset;
+    var alpha_array = Array.apply(null, Array(amount)).map(function(){return 255});
     for (i = 0; i < bytes.length; i++) {
         // Ignore the Alpha byte
-        if ((i % 4) == 3){
+        if (((i+offset) % 4) == 3){
             result[i] = alpha_array;
         } else {
             result[i] = createSplit(randomness, bytes[i], amount);
