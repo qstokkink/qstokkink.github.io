@@ -1,33 +1,52 @@
 <!DOCTYPE html>
 <html>
+<style>
+#myProgress {
+    position: relative;
+    width: 100%;
+    height: 30px;
+    background-color: #f0f5f5;
+}
+#myBar {
+    position: absolute;
+    width: 0%;
+    height: 100%;
+    background-color: #6699cc;
+}
+</style>
 <head>
 <script>
-function csrByte() {
-    var out = new Uint8Array(1);
-    window.crypto.getRandomValues(out);
-    return out[0];
-}
+var workers = 8;
+var dstCanvasses = [];
+var dstCanvassesDetachedData = [];
+var readyCanvasses = [];
+var waitingCanvasses = 0;
 
-function goodRandomByte(b) {
-    var out = 0;
-    while ((out == 0) || (b == out))
-        out = csrByte();
-    return out;
-}
+var pbWidth = 0;
+var pbTarget = 0;
+var pbRunner = null;
 
-function createSplit(b, amount) {
-    var out = [];
-    var sR  = 0;
-    for (i = 0; i < amount - 2; i++) {
-        r   = goodRandomByte(b);
-        sR  += r;
-        sR  %= 256;
-        out.push(r);
+function progress(target, teleport) {
+    // Stolen from http://www.w3schools.com/howto/howto_js_progressbar.asp
+    var elem = document.getElementById("myBar");   
+    var id = null;
+    function frame() {
+        elem.style.width = pbWidth + '%'; 
+        if (pbWidth >= pbTarget) {
+            elem.style.width = pbTarget + '%'; 
+            clearInterval(id);
+        } else {
+            pbWidth++; 
+            if (pbWidth + 10 < pbTarget)
+                pbWidth += 10;
+        }
     }
-    var sr  = goodRandomByte(b);
-    out.push((256 + sr - sR) % 256);
-    out.push((256 - sr + b) % 256);
-    return out;
+    if ((target > pbTarget) || teleport){
+        pbTarget = target;
+        clearInterval(pbRunner);        
+        id = setInterval(frame, 10);
+        pbRunner = id;
+    }
 }
 
 function createCanvasNodes(amount, hidden) {
@@ -44,6 +63,10 @@ function createCanvasNodes(amount, hidden) {
 }
 
 function createImageNodes(dataURLs) {
+    var hr = document.createElement('hr');
+    var t = document.createTextNode("Save the following image" + (dataURLs.length > 1 ? "s" : "") +" to your harddisk.");
+    addNodeToArea(hr);
+    addNodeToArea(t);
     for (i = 0; i < dataURLs.length; i++) {
         var node = document.createElement('p');
         if (dataURLs.length > 1)
@@ -74,46 +97,76 @@ DrawImageCallback = function(file, canvas, callback){
         ctx.canvas.width = this.img.width;
         ctx.canvas.height = this.img.height;
         ctx.drawImage(this.img, 0, 0);
-        addNodeToArea(this.canvas);
         this.callback(ctx);
     }).bind(this);
     this.img.onload = this.cb;
     this.img.src = URL.createObjectURL(file);
 };
 
-var dstCanvasses = [];
+function onSplitSubJob(event) {
+    var off = event.data.offset;
+    var out = event.data.result;
+    for (j = 0; j < out.length; j++)
+        for (k = 0; k < out[j].length; k++)
+            dstCanvassesDetachedData[k][off+j] = out[j][k];
+    if (workers == readyCanvasses.push(true)) {
+        dataURLs = [];
+        for (i = 0; i < out[0].length; i++) {
+            var ctx = dstCanvasses[i].getContext('2d');
+            var img = new ImageData(dstCanvassesDetachedData[i], dstCanvasses[i].width);
+            ctx.putImageData(img, 0, 0);
+            dataURLs.push(dstCanvasses[i].toDataURL('image/png'));
+        }
+        createImageNodes(dataURLs);
+        progress(100, true);
+        dstCanvasses = [];
+    } else
+        progress(100.0*readyCanvasses.length/workers, false);
+}
+
 function doSplit(context) {
     var canvas = context.canvas;
     var amount = dstCanvasses.length;
-    var pixels  = [];
-    var contexts = [];
+
     for (i = 0; i < amount; i++) {
-        contexts.push(dstCanvasses[i].getContext('2d'));
-        pixels.push(contexts[i].createImageData(1,1));
-        contexts[i].canvas.width    = context.canvas.width;
-        contexts[i].canvas.height   = context.canvas.height;
+        dstCanvasses[i].width = canvas.width;
+        dstCanvasses[i].height = canvas.height;
+        dstCanvassesDetachedData[i] = new Uint8ClampedArray(canvas.width*canvas.height*4)
     }
-    for (x = 0; x < canvas.width; x++) {
-        for (y = 0; y < canvas.height; y++) {
-            var color = context.getImageData(x, y, 1, 1).data;
-            var splitr = createSplit(color[0], amount);
-            var splitg = createSplit(color[1], amount);
-            var splitb = createSplit(color[2], amount);
-            for (i = 0; i < amount; i++) {
-                pixels[i].data[0] = splitr[i];
-                pixels[i].data[1] = splitg[i];
-                pixels[i].data[2] = splitb[i];
-                pixels[i].data[3] = 255;
-                contexts[i].putImageData(pixels[i],x,y);
-            }
+    
+    var imgdata = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    var workload = Math.floor(imgdata.length/workers);
+    var threads = new Array(workers);
+    var terminate = false;
+    for (i = 0; i < workers; i++){
+        var w = new Worker("splitworker.js");
+        threads[i] = w;
+        w.onmessage = onSplitSubJob;
+        var wl = ((i == workers-1) ? (imgdata.length-(workers-1)*workload) : workload);
+        var bytes = imgdata.slice(i*workload, i*workload+wl)
+        var randomness = new Uint8Array(wl*(amount-1));
+        try {
+            window.crypto.getRandomValues(randomness);
+        } catch(err) {
+            terminate = true;
+            progress(0, true);
+            break;
         }
+        w.postMessage({
+                        "offset": i*workload,
+                        "amount": amount,
+                        "randomness": randomness,
+                        "bytes": bytes
+                      });
     }
-    dataURLs = [];
-    for (i = 0; i < amount; i++) {
-        dataURLs.push(dstCanvasses[i].toDataURL('image/png'));
+    if (terminate){
+        for (i = 0; i < workers.length; i++)
+            threads[i].terminate();
+        alert("Failed to generate enough random stuff.\n"+
+                "Consider setting amount of workers to at least:\n"+
+                Math.ceil(imgdata.length/65536*(amount-1)));
+        return;
     }
-    createImageNodes(dataURLs);
-    dstCanvasses = [];
 }
 
 function splitImage(obj) {
@@ -125,18 +178,57 @@ function splitImage(obj) {
     var canvasses       = createCanvasNodes(amount + 1, true);
     var srcCanvas       = canvasses[0];
     dstCanvasses        = canvasses.slice(1);
+    dstCanvassesDetachedData = [];
+    readyCanvasses = [];
     clearArea();
+    progress(0, true);
     // Perform magic trick
     new DrawImageCallback(files[0], srcCanvas, doSplit);
 }
 
-var readyCanvasses = [];
+function onCombineSubJob(event) {
+    var off = event.data.offset;
+    var out = event.data.result;
+    for (j = 0; j < out.length; j++)
+        dstCanvassesDetachedData[0][off+j] = out[j];
+    if (workers == readyCanvasses.push(true)) {
+        dataURLs = [];
+        var ctx = dstCanvasses[0].getContext('2d');
+        var img = new ImageData(dstCanvassesDetachedData[0], dstCanvasses[0].width);
+        ctx.putImageData(img, 0, 0);
+        dataURLs.push(dstCanvasses[0].toDataURL('image/png'));
+        createImageNodes(dataURLs);
+        progress(100, true);
+        dstCanvasses = [];
+    } else
+        progress(100.0*readyCanvasses.length/workers, false);
+}
+
 function doCombine() {
     var canvas  = dstCanvasses[0];
     canvas.width = readyCanvasses[0].canvas.width;
     canvas.height = readyCanvasses[0].canvas.height;
     var amount  = readyCanvasses.length;
-    var context = canvas.getContext('2d');
+    var datas = new Array(amount);
+    for (i = 0; i < amount; i++)
+        datas[i] = readyCanvasses[i].getImageData(0, 0, canvas.width, canvas.height).data;
+    dstCanvassesDetachedData[0] = new Uint8ClampedArray(canvas.width*canvas.height*4)
+    var datalen = datas[0].length;
+    var workload = Math.floor(datalen/workers);
+    readyCanvasses = [];
+    for (i = 0; i < workers; i++){
+        var w = new Worker("combineworker.js");
+        w.onmessage = onCombineSubJob;
+        var wl = ((i == workers-1) ? (datalen-(workers-1)*workload) : workload);
+        var bytes = new Array(amount);
+        for (j = 0; j < amount; j++)
+            bytes[j] = datas[j].slice(i*workload, i*workload+wl)
+        w.postMessage({
+                        "offset": i*workload,
+                        "bytes": bytes
+                      });
+    }
+    /*var context = canvas.getContext('2d');
     var pixel   = context.createImageData(1,1);
     for (x = 0; x < canvas.width; x++) {
         for (y = 0; y < canvas.height; y++) {
@@ -157,10 +249,9 @@ function doCombine() {
     dataURLs = [];
     dataURLs.push(canvas.toDataURL('image/png'));
     createImageNodes(dataURLs);
-    readyCanvasses = [];
+    readyCanvasses = [];*/
 }
 
-var waitingCanvasses = 0;
 function tryCombine(context) {
     readyCanvasses.push(context);
     if (--waitingCanvasses == 0) {
@@ -178,7 +269,9 @@ function combineImages(obj) {
     var srcCanvasses    = canvasses.slice(1);
     dstCanvasses        = canvasses.slice(0, 1);
     clearArea();
+    progress(0, true);
     waitingCanvasses    = amount;
+    dstCanvassesDetachedData = [];
     readyCanvasses      = [];
     // Perform magic trick
     for (i = 0; i < amount; i++)
@@ -187,6 +280,18 @@ function combineImages(obj) {
 </script>
 </head>
 <body>
+
+<h1>Image-based SHP</h1>
+<p>Securely split images and piece them back together again.</p>
+
+<div id="myProgress">
+  <div id="myBar"></div>
+</div>
+<p align="right" style="font-size:12px"><a href="http://www.w3schools.com/howto/howto_js_progressbar.asp">Thanks to W3Schools for the Progress Bar</a>.</p>
+<p>
+Choose the amount of workers/threads:<br>
+<input type="number" min="2" max="128" value="8" onchange="workers=this.value">
+</p>
 
 <div id="form" style="width:350px;">
 <fieldset>
@@ -214,8 +319,6 @@ Choose files:<br>
 </fieldset>
 </div>
 
-
-<!-- http://www.htmlgoodies.com/html5/tutorials/introducing-html-5-web-workers-bringing-multi-threading-to-javascript.html#fbid=OhDrcfoK5yX -->
 <div id="resultarea">
 </div>
 
