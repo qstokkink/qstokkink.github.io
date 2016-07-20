@@ -138,6 +138,7 @@ function doSplit(context) {
     var workload = Math.floor(imgdata.length/workers);
     var threads = new Array(workers);
     var terminate = false;
+    var harderror = false;
     var needed = Math.ceil(imgdata.length/65536*(amount-1));
     if (workers < needed) {
         terminate = true;
@@ -152,6 +153,7 @@ function doSplit(context) {
             try {
                 window.crypto.getRandomValues(randomness);
             } catch(err) {
+                harderror = true;
                 terminate = true;
                 progress(0, true);
                 break;
@@ -170,9 +172,15 @@ function doSplit(context) {
                 threads[i].terminate();
             } catch (err) {}
         }
-        alert("Failed to generate enough random stuff.\n"+
-                "Consider setting amount of workers to at least:\n"+
-                needed);
+        if (harderror) {
+            alert("Failed to generate enough random stuff.\n"+
+                    "You will need even more than "+
+                    needed + " workers.");
+        } else {
+            alert("Failed to generate enough random stuff.\n"+
+                    "Consider setting amount of workers to at least:\n"+
+                    needed);
+        }
         return;
     }
 }
