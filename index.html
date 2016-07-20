@@ -138,33 +138,41 @@ function doSplit(context) {
     var workload = Math.floor(imgdata.length/workers);
     var threads = new Array(workers);
     var terminate = false;
-    for (i = 0; i < workers; i++){
-        var w = new Worker("splitworker.js");
-        threads[i] = w;
-        w.onmessage = onSplitSubJob;
-        var wl = ((i == workers-1) ? (imgdata.length-(workers-1)*workload) : workload);
-        var bytes = imgdata.slice(i*workload, i*workload+wl)
-        var randomness = new Uint8Array(wl*(amount-1));
-        try {
-            window.crypto.getRandomValues(randomness);
-        } catch(err) {
-            terminate = true;
-            progress(0, true);
-            break;
+    var needed = Math.ceil(imgdata.length/65536*(amount-1));
+    if (workers < needed) {
+        terminate = true;
+    } else {
+        for (i = 0; i < workers; i++){
+            var w = new Worker("splitworker.js");
+            threads[i] = w;
+            w.onmessage = onSplitSubJob;
+            var wl = ((i == workers-1) ? (imgdata.length-(workers-1)*workload) : workload);
+            var bytes = imgdata.slice(i*workload, i*workload+wl)
+            var randomness = new Uint8Array(wl*(amount-1));
+            try {
+                window.crypto.getRandomValues(randomness);
+            } catch(err) {
+                terminate = true;
+                progress(0, true);
+                break;
+            }
+            w.postMessage({
+                            "offset": i*workload,
+                            "amount": amount,
+                            "randomness": randomness,
+                            "bytes": bytes
+                          });
         }
-        w.postMessage({
-                        "offset": i*workload,
-                        "amount": amount,
-                        "randomness": randomness,
-                        "bytes": bytes
-                      });
     }
     if (terminate){
-        for (i = 0; i < workers.length; i++)
-            threads[i].terminate();
+        for (i = 0; i < threads.length; i++) {
+            try {
+                threads[i].terminate();
+            } catch (err) {}
+        }
         alert("Failed to generate enough random stuff.\n"+
                 "Consider setting amount of workers to at least:\n"+
-                Math.ceil(imgdata.length/65536*(amount-1)));
+                needed);
         return;
     }
 }
@@ -228,28 +236,6 @@ function doCombine() {
                         "bytes": bytes
                       });
     }
-    /*var context = canvas.getContext('2d');
-    var pixel   = context.createImageData(1,1);
-    for (x = 0; x < canvas.width; x++) {
-        for (y = 0; y < canvas.height; y++) {
-            var color = readyCanvasses[0].getImageData(x, y, 1, 1).data;
-            pixel.data[0] = color[0];
-            pixel.data[1] = color[1];
-            pixel.data[2] = color[2];
-            pixel.data[3] = 255;
-            for (i = 1; i < amount; i++) {
-                c = readyCanvasses[i].getImageData(x, y, 1, 1).data;
-                pixel.data[0] = (pixel.data[0] + c[0]) % 256;
-                pixel.data[1] = (pixel.data[1] + c[1]) % 256;
-                pixel.data[2] = (pixel.data[2] + c[2]) % 256;
-            }
-            context.putImageData(pixel,x,y);
-        }
-    }
-    dataURLs = [];
-    dataURLs.push(canvas.toDataURL('image/png'));
-    createImageNodes(dataURLs);
-    readyCanvasses = [];*/
 }
 
 function tryCombine(context) {
@@ -290,7 +276,7 @@ function combineImages(obj) {
 <p align="right" style="font-size:12px"><a href="http://www.w3schools.com/howto/howto_js_progressbar.asp">Thanks to W3Schools for the Progress Bar</a>.</p>
 <p>
 Choose the amount of workers/threads:<br>
-<input type="number" min="2" max="128" value="8" onchange="workers=this.value">
+<input type="number" min="2" max="2048" value="8" onchange="workers=this.value">
 </p>
 
 <div id="form" style="width:350px;">
