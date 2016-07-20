@@ -1,3 +1,19 @@
+/**
+ * function from http://stackoverflow.com/a/6274381
+ *
+ * Shuffles array in place.
+ * @param {Array} a items The array containing the items.
+ */
+function shuffle(a) {
+    var j, x, i;
+    for (i = a.length; i; i--) {
+        j = Math.floor(Math.random() * i);
+        x = a[i - 1];
+        a[i - 1] = a[j];
+        a[j] = x;
+    }
+}
+
 function csrByte(randomness) {
     var out = 0;
     if (randomness.random_index < randomness.maxlen){
@@ -28,6 +44,7 @@ function createSplit(randomness, b, amount) {
     var sr  = goodRandomByte(randomness, b);
     out[amount-2] = (256 + sr - sR) % 256;
     out[amount-1] = (256 - sr + b) % 256;
+    shuffle(out);
     return out;
 }
 
