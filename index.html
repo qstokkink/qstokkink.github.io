@@ -22,6 +22,9 @@ var dstCanvassesDetachedData = [];
 var readyCanvasses = [];
 var waitingCanvasses = 0;
 
+var activeThreads = 0;
+var maxActiveThreads = (!!window.chrome) ? 25 : 512;
+
 var pbWidth = 0;
 var pbTarget = 0;
 var pbRunner = null;
@@ -104,6 +107,7 @@ DrawImageCallback = function(file, canvas, callback){
 };
 
 function onSplitSubJob(event) {
+    activeThreads--;
     var off = event.data.offset;
     var out = event.data.result;
     for (j = 0; j < out.length; j++)
@@ -124,6 +128,24 @@ function onSplitSubJob(event) {
         progress(100.0*readyCanvasses.length/workers, false);
 }
 
+function delayMessages(wscript, wfunc, messages) {
+    var available = maxActiveThreads - activeThreads;
+    if (available == 0) {
+        setTimeout(function(){ delayMessages(wscript, wfunc, messages); }, activeThreads * 10);
+    } else {
+        var i = 0;
+        while ((messages.length > 0) && (i < available)) {
+            activeThreads++;
+            var w = new Worker(wscript);
+            w.onmessage = wfunc;
+            w.postMessage(messages.pop());
+        }
+        if (messages.length > 0) {
+            setTimeout(function(){ delayMessages(wscript, wfunc, messages); }, activeThreads * 10);
+        }
+    }
+}
+
 function doSplit(context) {
     var canvas = context.canvas;
     var amount = dstCanvasses.length;
@@ -139,14 +161,12 @@ function doSplit(context) {
     var threads = new Array(workers);
     var terminate = false;
     var harderror = false;
-    var needed = Math.ceil(imgdata.length/65536*(amount-1));
+    var needed = Math.ceil((imgdata.length*(amount-1))/65536.0);
     if (workers < needed) {
         terminate = true;
     } else {
+        var delayed = [];
         for (i = 0; i < workers; i++){
-            var w = new Worker("splitworker.js");
-            threads[i] = w;
-            w.onmessage = onSplitSubJob;
             var wl = ((i == workers-1) ? (imgdata.length-(workers-1)*workload) : workload);
             var bytes = imgdata.slice(i*workload, i*workload+wl)
             var randomness = new Uint8Array(wl*(amount-1));
@@ -158,12 +178,24 @@ function doSplit(context) {
                 progress(0, true);
                 break;
             }
-            w.postMessage({
+            var message = {
                             "offset": i*workload,
                             "amount": amount,
                             "randomness": randomness,
                             "bytes": bytes
-                          });
+                          }
+            if (i < maxActiveThreads) {
+                var w = new Worker("splitworker.js");
+                threads[i] = w;
+                activeThreads++;
+                w.onmessage = onSplitSubJob;
+                w.postMessage(message);
+            } else if (i == workers-1) {
+                delayed.push(message);
+                delayMessages("splitworker.js", onSplitSubJob, delayed);
+            } else {
+                delayed.push(message);
+            }
         }
     }
     if (terminate){
@@ -233,16 +265,25 @@ function doCombine() {
     var workload = Math.floor(datalen/workers);
     readyCanvasses = [];
     for (i = 0; i < workers; i++){
-        var w = new Worker("combineworker.js");
-        w.onmessage = onCombineSubJob;
         var wl = ((i == workers-1) ? (datalen-(workers-1)*workload) : workload);
         var bytes = new Array(amount);
         for (j = 0; j < amount; j++)
             bytes[j] = datas[j].slice(i*workload, i*workload+wl)
-        w.postMessage({
-                        "offset": i*workload,
-                        "bytes": bytes
-                      });
+        message = {
+                    "offset": i*workload,
+                    "bytes": bytes
+                  };
+        if (i < maxActiveThreads) {
+            var w = new Worker("combineworker.js");
+            w.onmessage = onCombineSubJob;
+            activeThreads++;
+            w.postMessage(message);
+        } else if (i == workers-1) {
+            delayed.push(message);
+            delayMessages("combineworker.js", onCombineSubJob, delayed);
+        } else {
+            delayed.push(message);
+        }
     }
 }
 
@@ -283,7 +324,7 @@ function combineImages(obj) {
 </div>
 <p align="right" style="font-size:12px"><a href="http://www.w3schools.com/howto/howto_js_progressbar.asp">Thanks to W3Schools for the Progress Bar</a>.</p>
 <p>
-Choose the amount of workers/threads:<br>
+Choose the amount of workers:<br>
 <input type="number" min="2" max="2048" value="8" onchange="workers=this.value">
 </p>
 
