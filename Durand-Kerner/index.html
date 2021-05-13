@@ -1,0 +1,62 @@
+<html>
+<head>
+<title>Durand-Kerner polynomial solver</title>
+<SCRIPT type=text/javascript>
+function processdata(){
+    x = new Array();
+    maxit = document.getElementById("setit").value;
+    xamount = 0;
+    precision = document.getElementById("setprecision").value;
+    rawfunc = document.getElementById("setfunction").value;
+    rawfunc = rawfunc.replace(/-/g,"+-");
+    funcsplit = rawfunc.split("+");
+    funcamount = funcsplit.length;
+    for (var i=0;i<funcamount;i++){
+        funcsplit[i] = funcsplit[i].split("x^");
+        if (funcsplit[i].length==1){ funcsplit[i][1] = 0; }
+        else {funcsplit[i][1] = funcsplit[i][1].replace("x^"); }
+        if (!funcsplit[i][0]){ funcsplit[i][0] = 1; }
+    }
+    for (var i=0;i<funcamount;i++){
+        exponent = parseInt(funcsplit[i][1])
+        if (exponent>xamount){ xamount=exponent; }
+    }
+    func = new Array();
+    for (var i=0;i<=xamount;i++){
+        var pos = -1;
+        for (var it=0;it<funcamount;it++){
+            if(funcsplit[it][1]==i){ pos = it };
+        }
+        if (pos != -1) { func[i] = funcsplit[pos][0]; }
+        else { func[i] = 0 }
+    }
+    func = "["+func.join(",")+"]";
+    sit= "&sit=" + document.getElementById("showval").checked;
+    window.open("beta5.html?x="+func+"&precision="+precision+"&xamount="+xamount+"&limitit="+maxit+sit);
+}
+</SCRIPT>
+</head>
+<body>
+<center>
+<div style="background:#EEEEEE; width:400; border-style:solid;">
+<form>
+<br>
+<table><tr><td>
+Function:</td><td>
+<input type="text" id="setfunction" value="x^3-3x^2+3x^1-5">
+</td></tr><tr><td>
+Precision:</td><td>
+<input type="text" id="setprecision" value="0.000001">
+</td></tr><tr><td>
+Maximum iterations:</td><td>
+<input type="text" id="setit" value="200">
+</td></tr><tr><td>
+<input type="checkbox" id="showval">Show iterations</td><td>
+</td></tr>
+</table><br>
+<button onmouseup="processdata()">Solve equation</button>
+</form>
+</div>
+</center>
+</body>
+</html>

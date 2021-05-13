@@ -1,0 +1,193 @@
+<html>
+<head>
+<title>Durand-Kerner polynomial solver - solution</title>
+<SCRIPT type=text/javascript>
+//alpha5: we be functioning
+//beta2: multiple vars
+//beta3: all functions
+var x = new Array();
+//get url parameters
+x=eval(gup("x"));
+var precision = gup("precision");
+var xamount = gup("xamount");
+var limitit = gup("limitit");
+var sit = gup("sit");
+//end uservars
+rprec = 1/precision;
+var iglob = 0;
+q = new Array();
+p = new Array();
+r = new Array();
+s = new Array();
+q[0] = [0.4,0.9];
+p[0] = cnumpower(q[0],0);
+r[0] = cnumpower(q[0],2);
+for (c in x){
+tc = x.length-1-c;
+if(x[tc]!=0){
+if (tc!=0){
+if ((x[tc]>=0)&&(tc<x.length-1)){ document.write("+"); }
+document.write(x[tc]+"x<sup/>"+tc+"</sup/>");
+} else {
+if ((x[tc]>=0)&&(tc<x.length-1)){ document.write("+"); }
+document.write(x[tc]);
+}
+}
+}
+document.write("<p/>");
+if(sit=="true"){
+document.write('<div id=div'+iglob+' style="background:#EEEEEE; width:400; border-style:solid;"/>');
+}
+for (var i=0;i<xamount;i++){
+eval("var root"+(i+1)+" = new Array()");
+eval("root"+(i+1)+"[0] = cnumpower(q[0],"+i+")");
+varname = 'root'+(i+1);
+midval = eval('varname+"<sub/>0</sub/>:"+Math.round('+varname+'[0][0]*rprec)/rprec+"+"+Math.round('+varname+'[0][1]*rprec)/rprec+"i<br/>"');
+if(sit=="true"){
+document.write(midval);
+}
+}
+if(sit=="true"){
+document.write('</div/><br/><div id=div'+iglob+' style="background:#EEEEEE; width:400; border-style:solid;"/>');
+}
+//we created xamount of variables
+//root1 -> root(xamount)
+while (iglob<limitit){
+for (var i=1;i<=xamount;i++){
+tvarname = 'root'+i;
+varname1 = tvarname+"["+(iglob+1)+"]";
+varname2 = tvarname+"["+iglob+"]";
+func = createfunc(eval(varname2));
+tempvar = eval("cnum("+varname2+",makeroot(i),'subtract')");
+eval(varname1+"=tempvar");
+if(sit=="true"){
+document.write(eval('tvarname+"<sub/>"+(iglob+1)+"</sub/>:"+Math.round('+varname1+'[0]*rprec)/rprec+"+"+Math.round('+varname1+'[1]*rprec)/rprec+"i<br/>"'));
+}
+}
+if(sit=="true"){
+document.write('</div/>');
+}
+if (wedoneyet(root1[iglob],root1[iglob+1])==true){ break; }
+if(sit=="true"){
+document.write('<br/><div id=div'+iglob+' style="background:#EEEEEE; width:400; border-style:solid;"/>');
+}
+iglob++;
+}
+if(sit=="false"){
+document.write('<div id=div'+(iglob-1)+' style="background:#EEEEEE; width:400; border-style:solid;"/>');
+for (var i=1;i<=xamount;i++){
+tvarname = 'root'+i;
+varname1 = tvarname+"["+(iglob+1)+"]";
+varname2 = tvarname+"["+iglob+"]";
+func = createfunc(eval(varname2));
+tempvar = eval("cnum("+varname2+",makeroot(i),'subtract')");
+eval(varname1+"=tempvar");
+document.write(eval('tvarname+":"+Math.round('+varname1+'[0]*rprec)/rprec+"+"+Math.round('+varname1+'[1]*rprec)/rprec+"i<br/>"'));
+}
+document.write('</div/>');
+}
+document.getElementById('div'+(iglob-1)).style.background = "#FF6600";
+document.getElementById('div'+(iglob-1)).style.borderColor='#CC0000';
+function makeroot(rootnum){
+subroot = new Array();
+subroot = [1,0];
+rsubt = eval("root"+rootnum+"["+iglob+"]");
+tiglob=eval(iglob+1);
+for (var i=1;i<=xamount;i++){
+varname = 'root'+(i);
+if(i<rootnum){
+rsuba = eval("eval(varname)[tiglob]");
+subroota = cnum(rsubt,rsuba,"subtract");
+subroot = cnum(subroota,subroot,"multiply");
+}
+if(i>rootnum){
+rsubb = eval("eval(varname)[iglob]");
+subroota = cnum(rsubt,rsubb,"subtract");
+subroot = cnum(subroota,subroot,"multiply");
+}
+}
+ret = cnum(func,subroot,"divide");
+return(ret);
+}
+function createfunc(pcalc){
+//x3 - 3x2 +3x - 5
+subb = cnum([x[0],0],cnumpower(pcalc,0),"multiply");
+for (c in x){
+if (c!=0){
+suba = cnum([x[c],0],cnumpower(pcalc,c),"multiply");
+subb = cnum(suba,subb,"add");
+}
+}
+return(subb);
+}
+//
+//Global i math:
+//
+function cnum(a,b,type){
+c = new Array();
+	if (type=="add"){
+		c[0]=a[0]+b[0];
+		c[1]=a[1]+b[1];
+		return(c);
+	}
+	if (type=="subtract"){
+		c[0]=a[0]-b[0];
+		c[1]=a[1]-b[1];
+		return(c);
+	}
+	if (type=="divide"){
+		c[0]=(a[0]*b[0]+a[1]*b[1])/(Math.pow(b[0],2)+Math.pow(b[1],2));
+		c[1]=(a[1]*b[0]-a[0]*b[1])/(Math.pow(b[0],2)+Math.pow(b[1],2));
+		return(c);
+	}
+	if (type=="multiply"){
+		c[0]=a[0]*b[0]-a[1]*b[1];
+		c[1]=a[1]*b[0]+a[0]*b[1];
+		return(c);
+	}
+}
+//note to self: b = only integers
+function cnumpower(a,b){
+c = a;
+	if(b>0){
+		for (var i=1;i<b;i++){
+			cnum(c,a,"multiply");
+		}
+	return(c);
+	}
+	if(b<0){
+		for (var i=1;i<-1*b;i++){
+			cnum(c,a,"divide");
+		}
+	return(c);
+	}
+	if(b==0){
+		c = [1,0];
+	return(c);
+	}
+}
+//are we done yet?
+function wedoneyet(a,b){
+c = false;
+	if ((Math.floor(a[0]*rprec)==Math.floor(b[0]*rprec))&&(Math.floor(a[1]*rprec)==Math.floor(b[1]*rprec))){
+		c = true;
+	}
+return(c);
+}
+function gup( name ){
+//this function was not made by me, all credit goes out to:
+//http://www.netlobo.com/url_query_string_javascript.html
+  name = name.replace(/[\[]/,"\\\[").replace(/[\]]/,"\\\]");
+  var regexS = "[\\?&]"+name+"=([^&#]*)";
+  var regex = new RegExp( regexS );
+  var results = regex.exec( window.location.href );
+  if( results == null )
+    return "";
+  else
+    return results[1];
+}
+</SCRIPT>
+</head>
+<body bgcolor=#CCFFAA>
+</body>
+</html>

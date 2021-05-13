@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<style>
+#myProgress {
+    position: relative;
+    width: 100%;
+    height: 30px;
+    background-color: #f0f5f5;
+}
+#myBar {
+    position: absolute;
+    width: 0%;
+    height: 100%;
+    background-color: #6699cc;
+}
+</style>
+<head>
+<script>
+var workers = 8;
+var dstCanvasses = [];
+var dstCanvassesDetachedData = [];
+var readyCanvasses = [];
+var waitingCanvasses = 0;
+
+var activeThreads = 0;
+var maxActiveThreads = (!!window.chrome) ? 25 : 512;
+
+var pbWidth = 0;
+var pbTarget = 0;
+var pbRunner = null;
+
+function progress(target, teleport) {
+    // Stolen from http://www.w3schools.com/howto/howto_js_progressbar.asp
+    var elem = document.getElementById("myBar");   
+    var id = null;
+    function frame() {
+        elem.style.width = pbWidth + '%'; 
+        if (pbWidth >= pbTarget) {
+            elem.style.width = pbTarget + '%'; 
+            clearInterval(id);
+        } else {
+            pbWidth++; 
+            if (pbWidth + 10 < pbTarget)
+                pbWidth += 10;
+        }
+    }
+    if ((target > pbTarget) || teleport){
+        pbTarget = target;
+        clearInterval(pbRunner);        
+        id = setInterval(frame, 10);
+        pbRunner = id;
+    }
+}
+
+function createCanvasNodes(amount, hidden) {
+    var out = [];
+    for (i = 0; i < amount; i++) {
+        var node = document.createElement('canvas');
+        if (hidden){
+            node.style.visibility = "hidden";
+        }
+        node.id = 'canvas' + i.toString();
+        out.push(node);
+    }
+    return out;
+}
+
+function createImageNodes(dataURLs) {
+    var hr = document.createElement('hr');
+    var t = document.createTextNode("Save the following image" + (dataURLs.length > 1 ? "s" : "") +" to your harddisk.");
+    addNodeToArea(hr);
+    addNodeToArea(t);
+    for (i = 0; i < dataURLs.length; i++) {
+        var node = document.createElement('p');
+        if (dataURLs.length > 1)
+            node.innerHTML = "Result " + i.toString() + ":<br>";
+        else
+            node.innerHTML = "Result:<br>";
+        var childImg = document.createElement('img');
+        childImg.src = dataURLs[i];
+        node.appendChild(childImg);
+        addNodeToArea(node);
+    }
+}
+
+function clearArea() {
+    document.getElementById("resultarea").innerHTML = '';
+}
+
+function addNodeToArea(node) {
+    document.getElementById("resultarea").appendChild(node);
+}
+
+DrawImageCallback = function(file, canvas, callback){
+    this.img = new Image();
+    this.canvas = canvas;
+    this.callback = callback;
+    this.cb = (function() {
+        var ctx = this.canvas.getContext('2d');
+        ctx.canvas.width = this.img.width;
+        ctx.canvas.height = this.img.height;
+        ctx.drawImage(this.img, 0, 0);
+        this.callback(ctx);
+    }).bind(this);
+    this.img.onload = this.cb;
+    this.img.src = URL.createObjectURL(file);
+};
+
+function onSplitSubJob(event) {
+    activeThreads--;
+    var off = event.data.offset;
+    var out = event.data.result;
+    for (j = 0; j < out.length; j++)
+        for (k = 0; k < out[j].length; k++)
+            dstCanvassesDetachedData[k][off+j] = out[j][k];
+    if (workers == readyCanvasses.push(true)) {
+        dataURLs = [];
+        for (i = 0; i < out[0].length; i++) {
+            var ctx = dstCanvasses[i].getContext('2d');
+            var img = new ImageData(dstCanvassesDetachedData[i], dstCanvasses[i].width);
+            ctx.putImageData(img, 0, 0);
+            dataURLs.push(dstCanvasses[i].toDataURL('image/png'));
+        }
+        createImageNodes(dataURLs);
+        progress(100, true);
+        dstCanvasses = [];
+    } else
+        progress(100.0*readyCanvasses.length/workers, false);
+}
+
+function delayMessages(wscript, wfunc, messages) {
+    var available = maxActiveThreads - activeThreads;
+    if (available == 0) {
+        setTimeout(function(){ delayMessages(wscript, wfunc, messages); }, activeThreads * 10);
+    } else {
+        var i = 0;
+        while ((messages.length > 0) && (i < available)) {
+            activeThreads++;
+            var w = new Worker(wscript);
+            w.onmessage = wfunc;
+            w.postMessage(messages.pop());
+        }
+        if (messages.length > 0) {
+            setTimeout(function(){ delayMessages(wscript, wfunc, messages); }, activeThreads * 10);
+        }
+    }
+}
+
+function doSplit(context) {
+    var canvas = context.canvas;
+    var amount = dstCanvasses.length;
+
+    for (i = 0; i < amount; i++) {
+        dstCanvasses[i].width = canvas.width;
+        dstCanvasses[i].height = canvas.height;
+        dstCanvassesDetachedData[i] = new Uint8ClampedArray(canvas.width*canvas.height*4)
+    }
+    
+    var imgdata = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    var workload = Math.floor(imgdata.length/workers);
+    var threads = new Array(workers);
+    var terminate = false;
+    var harderror = false;
+    var needed = Math.ceil((imgdata.length*(amount-1))/65536.0);
+    if (workers < needed) {
+        terminate = true;
+    } else {
+        var delayed = [];
+        for (i = 0; i < workers; i++){
+            var wl = ((i == workers-1) ? (imgdata.length-(workers-1)*workload) : workload);
+            var bytes = imgdata.slice(i*workload, i*workload+wl)
+            var randomness = new Uint8Array(wl*(amount-1));
+            try {
+                window.crypto.getRandomValues(randomness);
+            } catch(err) {
+                harderror = true;
+                terminate = true;
+                progress(0, true);
+                break;
+            }
+            var message = {
+                            "offset": i*workload,
+                            "amount": amount,
+                            "randomness": randomness,
+                            "bytes": bytes
+                          }
+            if (i < maxActiveThreads) {
+                var w = new Worker("splitworker.js");
+                threads[i] = w;
+                activeThreads++;
+                w.onmessage = onSplitSubJob;
+                w.postMessage(message);
+            } else if (i == workers-1) {
+                delayed.push(message);
+                delayMessages("splitworker.js", onSplitSubJob, delayed);
+            } else {
+                delayed.push(message);
+            }
+        }
+    }
+    if (terminate){
+        for (i = 0; i < threads.length; i++) {
+            try {
+                threads[i].terminate();
+            } catch (err) {}
+        }
+        if (harderror) {
+            alert("Failed to generate enough random stuff.\n"+
+                    "You will need even more than "+
+                    needed + " workers.");
+        } else {
+            alert("Failed to generate enough random stuff.\n"+
+                    "Consider setting amount of workers to at least:\n"+
+                    needed);
+        }
+        return;
+    }
+}
+
+function splitImage(obj) {
+    // Read input
+    var files   = obj.querySelector("#splitImgInputFile").files;
+    var amount  = parseInt(obj.querySelector("#splitImgInputAmount").value);
+    // Check input TODO
+    // Initialize objects
+    var canvasses       = createCanvasNodes(amount + 1, true);
+    var srcCanvas       = canvasses[0];
+    dstCanvasses        = canvasses.slice(1);
+    dstCanvassesDetachedData = [];
+    readyCanvasses = [];
+    clearArea();
+    progress(0, true);
+    // Perform magic trick
+    new DrawImageCallback(files[0], srcCanvas, doSplit);
+}
+
+function onCombineSubJob(event) {
+    var off = event.data.offset;
+    var out = event.data.result;
+    for (j = 0; j < out.length; j++)
+        dstCanvassesDetachedData[0][off+j] = out[j];
+    if (workers == readyCanvasses.push(true)) {
+        dataURLs = [];
+        var ctx = dstCanvasses[0].getContext('2d');
+        var img = new ImageData(dstCanvassesDetachedData[0], dstCanvasses[0].width);
+        ctx.putImageData(img, 0, 0);
+        dataURLs.push(dstCanvasses[0].toDataURL('image/png'));
+        createImageNodes(dataURLs);
+        progress(100, true);
+        dstCanvasses = [];
+    } else
+        progress(100.0*readyCanvasses.length/workers, false);
+}
+
+function doCombine() {
+    var canvas  = dstCanvasses[0];
+    canvas.width = readyCanvasses[0].canvas.width;
+    canvas.height = readyCanvasses[0].canvas.height;
+    var amount  = readyCanvasses.length;
+    var datas = new Array(amount);
+    for (i = 0; i < amount; i++)
+        datas[i] = readyCanvasses[i].getImageData(0, 0, canvas.width, canvas.height).data;
+    dstCanvassesDetachedData[0] = new Uint8ClampedArray(canvas.width*canvas.height*4)
+    var datalen = datas[0].length;
+    var workload = Math.floor(datalen/workers);
+    readyCanvasses = [];
+    for (i = 0; i < workers; i++){
+        var wl = ((i == workers-1) ? (datalen-(workers-1)*workload) : workload);
+        var bytes = new Array(amount);
+        for (j = 0; j < amount; j++)
+            bytes[j] = datas[j].slice(i*workload, i*workload+wl)
+        message = {
+                    "offset": i*workload,
+                    "bytes": bytes
+                  };
+        if (i < maxActiveThreads) {
+            var w = new Worker("combineworker.js");
+            w.onmessage = onCombineSubJob;
+            activeThreads++;
+            w.postMessage(message);
+        } else if (i == workers-1) {
+            delayed.push(message);
+            delayMessages("combineworker.js", onCombineSubJob, delayed);
+        } else {
+            delayed.push(message);
+        }
+    }
+}
+
+function tryCombine(context) {
+    readyCanvasses.push(context);
+    if (--waitingCanvasses == 0) {
+        doCombine();
+    }
+}
+
+function combineImages(obj) {
+    // Read input
+    var files   = obj.querySelector("#combineImgInputFile").files;
+    var amount  = files.length;
+    // Check input TODO
+    // Initialize objects
+    var canvasses       = createCanvasNodes(amount + 1, true);
+    var srcCanvasses    = canvasses.slice(1);
+    dstCanvasses        = canvasses.slice(0, 1);
+    clearArea();
+    progress(0, true);
+    waitingCanvasses    = amount;
+    dstCanvassesDetachedData = [];
+    readyCanvasses      = [];
+    // Perform magic trick
+    for (i = 0; i < amount; i++)
+        new DrawImageCallback(files[i], srcCanvasses[i], tryCombine);
+}
+</script>
+</head>
+<body>
+
+<h1>Image-based SHP</h1>
+<p>Securely split images and piece them back together again.</p>
+
+<div id="myProgress">
+  <div id="myBar"></div>
+</div>
+<p align="right" style="font-size:12px"><a href="http://www.w3schools.com/howto/howto_js_progressbar.asp">Thanks to W3Schools for the Progress Bar</a>.</p>
+<p>
+Choose the amount of workers:<br>
+<input type="number" min="2" max="2048" value="8" onchange="workers=this.value">
+</p>
+
+<div id="form" style="width:350px;">
+<fieldset>
+<legend>Split an image</legend>
+<p>
+Choose a file:<br>
+<input type="file" id="splitImgInputFile">
+</p>
+<p>
+Choose the amount of output files:<br>
+<input type="number" id="splitImgInputAmount" min="3" max="200" value="3">
+</p>
+<input type="button" onclick="splitImage(this.parentNode)" value="CREATE" style="float:right">
+</fieldset>
+</div>
+
+<div id="form" style="width:350px;">
+<fieldset>
+<legend>Combine images</legend>
+<p>
+Choose files:<br>
+<input multiple type="file" id="combineImgInputFile">
+</p>
+<input type="button" onclick="combineImages(this.parentNode)" value="COMBINE" style="float:right">
+</fieldset>
+</div>
+
+<div id="resultarea">
+</div>
+
+</body>
+</html>
